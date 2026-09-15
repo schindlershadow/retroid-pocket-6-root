@@ -21,8 +21,8 @@ handheld's files.
 
 ## 1. Back up your stock firmware
 
-> **Don't skip this.** Retroid publishes no factory image, so this backup is the only way to undo
-> anything later.
+Step 3 patches `init_boot.img`, which this step is where you get. It's also your only way back —
+Retroid publishes no factory image.
 
 1. Open [`dump-boot.sh`](dump-boot.sh) and copy its contents (use the **Copy raw file** button).
 2. On the handheld: **Handheld Settings → Advanced → "Run script as Root"**.
