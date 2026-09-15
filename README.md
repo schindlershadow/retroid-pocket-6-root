@@ -1,202 +1,110 @@
-# Rooting the Retroid Pocket 6 (GKI 2.0 / Android 13)
+# Rooting the Retroid Pocket 6
 
-Magisk on a Retroid Pocket 6 (`kalama`, Snapdragon 8 Gen 2, Android 13, build
-`RP6_V1.0.0.406_20260616_145755DE_user`), written up after doing it — including the two mistakes
-that cost the most time, one of which produces a device that looks **completely bricked** while
-nothing has actually been written to it.
+Magisk root on a Retroid Pocket 6 (Android 13). Bootloader must already be unlocked — unlocking is
+the step that wipes your data; everything here does not.
 
-No wipe is required if your bootloader is already unlocked. Unlocking is the step that wipes.
+Most of this is taps and drag-and-drop. Only the final flashing step needs a terminal.
 
-> **Read the two ⚠️ sections before touching fastboot.** They are the whole point of this guide.
-> Generic "root any Android phone" tutorials get both of them wrong on GKI 2.0 devices.
+## What you'll need
 
----
+| | |
+|---|---|
+| [Magisk](https://github.com/topjohnwu/Magisk/releases) | `Magisk-v31.0.apk` — install on the handheld |
+| [Android SDK Platform-Tools](https://developer.android.com/tools/releases/platform-tools) | `adb` + `fastboot` for your PC |
+| [`dump-boot.sh`](dump-boot.sh) | from this repo |
+| A USB cable | fastboot does not work wirelessly |
 
-## ⚠️ 1. Back up your stock images FIRST — there is no factory image to fall back on
-
-**Retroid publishes no factory firmware, and the ADUPS OTA server offers nothing.** If you corrupt
-`init_boot` without a backup, there is no download that will save you. This is not the usual
-situation where a stock ROM is a search away.
-
-You can dump the partitions *before* you have root, using Retroid's own built-in root-script
-feature: **Handheld Settings → Advanced → "Run script as Root"**.
-
-Use **[`dump-boot.sh`](dump-boot.sh)** from this repo — paste the whole file into that box. It dumps
-every boot-related partition, records the build and active slot, writes checksums, and verifies the
-image magic bytes.
-
-> **Why it is written the way it is:** that feature ships **each line** to a root daemon as its own
-> `sh -c`. Nothing carries between lines — no variables, no `cd`, no `set -e`, no multi-line
-> `if`/`for` blocks. Every line in `dump-boot.sh` is independently valid and complete, and a
-> single-line `for` loop is used where iteration is needed. Keep that property if you edit it.
-
-It is read-only with respect to your partitions — they are only ever used as `dd` **input**. The
-only writes are new files under `/sdcard/rp6-dump`.
-
-Then, from your computer:
-
-```bash
-adb pull /sdcard/rp6-dump ./rp6-dump
-cd rp6-dump && sha256sum -c SHA256SUMS
-```
-
-**Verify before you trust it.** A truncated or all-zero dump is worse than no dump, because you will
-rely on it in exactly the moment you cannot afford to. Check `magic.txt` — boot images must show
-`ANDROID!`, `vbmeta` must show `AVB0` — and check the sizes: `init_boot` ~8 MB, `boot` ~96 MB,
-`vbmeta` 64 KB. Then **copy the directory to a second machine.**
-
-A/B naming varies between builds (bare `boot`/`init_boot` vs slot-suffixed `boot_a`/`boot_b`), so the
-script tries every plausible name and skips the ones that do not exist. On this device `boot.img` was
-byte-identical to `boot_b.img` while `boot_a.img` differed — slot A held an older build, which makes
-it a genuine rollback target.
+macOS users also need [Android File Transfer](https://www.android.com/filetransfer/) to see the
+handheld's files.
 
 ---
 
-## 2. Patch `init_boot.img`, not `boot.img`
+## 1. Back up your stock firmware
 
-This device is **GKI 2.0**, so the ramdisk lives in its own `init_boot` partition:
+> **Don't skip this.** Retroid publishes no factory image, so this backup is the only way to undo
+> anything later.
+
+1. Open [`dump-boot.sh`](dump-boot.sh) and copy its contents (use the **Copy raw file** button).
+2. On the handheld: **Handheld Settings → Advanced → "Run script as Root"**.
+3. Paste it in and run it.
+
+It creates a folder called **`rp6-dump`** in internal storage. It only reads your partitions — it
+doesn't change anything.
+
+## 2. Copy the backup to your PC
+
+Plug in the USB cable, then swipe down on the handheld and set USB mode to **File Transfer**.
+
+The handheld now appears in your file manager. Open **Internal shared storage → `rp6-dump`** and drag
+it somewhere safe on your PC.
+
+**Quick check:** `init_boot.img` should be about 8 MB and `boot.img` about 96 MB. If anything is
+0 bytes, run the script again.
+
+## 3. Patch the image
+
+1. Drag `init_boot.img` from your backup into the handheld's **Download** folder.
+2. Install the [Magisk](https://github.com/topjohnwu/Magisk/releases) APK on the handheld and open it.
+3. Tap **Install → Select and Patch a File** → choose `init_boot.img`.
+4. Magisk saves a `magisk_patched_*.img` into **Download**. Drag it back to your PC.
+
+> Patch `init_boot.img`, not `boot.img`. This device keeps the part Magisk needs in a separate
+> `init_boot` partition, and patching `boot.img` silently does nothing.
+
+## 4. Flash it
+
+Unzip [Platform-Tools](https://developer.android.com/tools/releases/platform-tools) and put your
+`magisk_patched_*.img` in that same folder. Then open a terminal there:
+
+- **Windows** — click the address bar in File Explorer, type `cmd`, press Enter
+- **macOS / Linux** — right-click the folder → *Open Terminal Here*
 
 ```
-init_boot.img   kernel_size=0           ramdisk_size=2015865
-boot_b.img      kernel_size=56048128    ramdisk_size=0
-```
-
-Magisk patches the **ramdisk**, so `init_boot.img` is the file you feed it. Patching `boot.img` on a
-GKI 2.0 device is the classic wasted evening.
-
-1. Install the Magisk app on the device (30.7+; 31.0 tested).
-2. Magisk → Install → **Select and Patch a File** → pick `init_boot.img`.
-3. Pull the result back: `adb pull /sdcard/Download/magisk_patched_*.img .`
-
-Verify which partition an image really is, rather than trusting a filename:
-
-```bash
-python3 -c "import struct;d=open('init_boot.img','rb').read(32);print('kernel_size',struct.unpack('<I',d[8:12])[0])"
-```
-
-`kernel_size 0` = ramdisk-only = `init_boot`. Nonzero = it is a `boot` image.
-
----
-
-## ⚠️ 3. Never `fastboot boot` a patched init_boot — it cannot work, and it fakes a brick
-
-Almost every rooting guide says to test-boot the patched image first:
-
-```bash
-fastboot boot magisk_patched_init_boot.img   # ❌ DO NOT DO THIS ON GKI 2.0
-```
-
-**On GKI 2.0 this can never succeed.** `fastboot boot` requires a complete bootable image, and
-`init_boot` has `kernel_size=0` — you are handing the bootloader a null kernel. There is no
-RAM-only dry run for a patched `init_boot`. Full stop.
-
-**The dangerous part is the side effect.** A failed `fastboot boot` counts as a failed boot attempt
-against your *current slot*. Enough of them and the bootloader marks that slot `unbootable` and
-silently falls back to the other one. On this device that meant landing on slot `_a` — an older
-build — against a `/data` written by `_b`. Result: a frozen boot logo that looks exactly like a
-bricked device, **despite nothing having been flashed**.
-
-A slot flip is invisible unless you go looking:
-
-```bash
-fastboot getvar current-slot
-fastboot getvar slot-unbootable:a
-fastboot getvar slot-unbootable:b
-```
-
-**Recovery** — restores the slot, clears the unbootable flag, resets the retry counter, and does
-**not** touch `/data`:
-
-```bash
-fastboot set_active b
-```
-
-So your real options are: flash directly with a verified stock image ready for rollback (what this
-guide does), or splice a hybrid test image (stock kernel + patched ramdisk) — which only tests an
-artifact you will never actually flash.
-
----
-
-## 4. Flash
-
-**fastboot does not work over wireless adb.** Use a USB cable.
-
-```bash
 adb reboot bootloader
-fastboot getvar current-slot          # note this; flashing targets the active slot
 fastboot flash init_boot magisk_patched_init_boot.img
 fastboot reboot
 ```
 
-Leave `vbmeta` stock. Do **not** run `fastboot flashing lock` afterwards — relocking with a modified
-boot chain is a reliable way to hard-brick.
+Use whatever filename Magisk actually produced. Open the Magisk app afterwards — it should now show
+as installed. Done.
 
-Confirm it took: the Magisk app should report itself installed, and `su` should work. Note that on
-this device `su` is at **`/debug_ramdisk/su`** and is *not* on adb shell's `PATH`.
-
----
-
-## 5. Expected after rooting
-
-- **A red "device is corrupt" AVB warning on every cold boot, needing a Power press.** This is
-  expected with stock `vbmeta` and a modified boot chain. Not a fault.
-- **Escape hatch:** hold **Volume Down** during boot for safe mode, which disables all Magisk
-  modules. This is how you recover from a module that breaks booting. Note it also switches off
-  benign modules (ad-blocking `hosts`, etc.) — re-enable them deliberately afterwards.
+> ⚠️ **Do not run `fastboot boot`** on the patched file, even though many guides suggest it. It
+> cannot work on this device and repeated attempts make it boot to a frozen logo that looks bricked.
+> If that happens, `fastboot set_active b` fixes it and your data is safe.
 
 ---
 
-## Recovery / rollback
+## Good to know
 
-```bash
-fastboot flash init_boot init_boot.img     # restore the stock ramdisk (un-root)
-fastboot flash boot     boot_b.img         # restore the stock kernel, slot b
-fastboot set_active a                      # or fall back to the other slot
+- A **red "device is corrupt" screen appears on every cold boot** — press Power to continue. This is
+  normal after rooting and is not a problem.
+- Hold **Volume Down** while booting for safe mode, which disables all Magisk modules. Use this if a
+  module ever stops the device booting.
+- **OTA updates:** take the update, then *before rebooting* use Magisk → Install → **Install to
+  Inactive Slot (After OTA)**.
+
+## Undo it
+
+```
+fastboot flash init_boot init_boot.img
 ```
 
-## OTA updates while rooted
+Uses the `init_boot.img` from your step 1 backup.
 
-A/B + Virtual A/B, so updates do not wipe. Take the OTA, then **before rebooting**, use
-Magisk → Install → **"Install to Inactive Slot (After OTA)"**. If an OTA refuses to apply, flash the
-stock `init_boot.img` back, update, then re-patch.
+## Next: Zygisk modules
 
----
+If you're installing Zygisk modules, use [NeoZygisk](https://github.com/JingMatrix/NeoZygisk/releases)
+rather than Magisk's built-in Zygisk, and **turn Magisk's own Zygisk off** in settings — otherwise
+NeoZygisk silently does nothing.
 
-## Gotchas that cost real time
-
-- **Root access to `/data/adb` is intermittently denied while magiskd is under strain** — the *same*
-  command fails, then succeeds seconds later. Retry in a loop before concluding you have a
-  permissions problem. A single failed `cp` here sent one session down a long, wrong detour.
-- **Toggling a module in the Magisk app strips the execute bit** from scripts under `/data/adb`
-  (everything gets normalised to `0660`), and Magisk **silently skips** non-executable
-  `post-fs-data.d` / `service.d` scripts. If you rely on such a script, re-`chmod 755` it after any
-  module toggle — or package it as a real Magisk module (`post-fs-data.sh` / `service.sh`), which
-  Magisk runs without needing +x.
-- **`zygisk mappings = 0` in a child process is normal** — Zygisk unmaps itself after injecting.
-  Look for the module's own `.so`, not `libzygisk.so`.
-- This ROM's `surfaceflinger` SIGSEGVs once per boot in its ANGLE build
-  (`libGLESv2_angle.so`, fault addr `0x18`), with tombstones predating rooting. It respawns
-  instantly and is **not** caused by root — do not chase it.
-
-## Zygisk modules
-
-If you are installing Zygisk modules, be aware that Magisk's **built-in** Zygisk wedged `magiskd`
-permanently with one module on this device (leaking a thread and an fd every 10 s until no app could
-launch). Replacing it with [NeoZygisk](https://github.com/JingMatrix/NeoZygisk) — which runs its own
-daemon — fixed it. If you do that, **Magisk's own Zygisk must be turned OFF**, or NeoZygisk silently
-no-ops.
-
-A worked example, including how to verify a module is actually doing anything, is in
-[openfg-retroid-pocket-6](https://github.com/schindlershadow/openfg-retroid-pocket-6).
+For a worked example, see
+**[openfg-retroid-pocket-6](https://github.com/schindlershadow/openfg-retroid-pocket-6)** — frame
+generation on this device.
 
 ---
 
-## Tested on
+Tested on a Retroid Pocket 6 (`kalama`), Android 13, build `RP6_V1.0.0.406_20260616_145755DE_user`,
+Magisk 30.7 and 31.0.
 
-Retroid Pocket 6, Snapdragon 8 Gen 2 (QCS8550 / `kalama`), Adreno 740, Android 13 (API 33), ROM
-`RP6_V1.0.0.406_20260616_145755DE_user`, bootloader already unlocked, active slot `_b`. Magisk 30.7
-initially, later 31.0.
-
-**No warranty.** Rooting and flashing can permanently damage a device, and on this one there is no
-vendor factory image to restore from. Back up your stock partitions before you start, and do not
-skip the two ⚠️ sections.
+No warranty — flashing can damage a device, and there's no vendor factory image for this one. Back up
+first.
