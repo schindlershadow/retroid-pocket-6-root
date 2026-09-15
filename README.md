@@ -21,28 +21,34 @@ situation where a stock ROM is a search away.
 You can dump the partitions *before* you have root, using Retroid's own built-in root-script
 feature: **Handheld Settings → Advanced → "Run script as Root"**.
 
-```sh
-dd if=/dev/block/by-name/init_boot of=/sdcard/init_boot.img
-dd if=/dev/block/by-name/boot_a    of=/sdcard/boot_a.img
-dd if=/dev/block/by-name/boot_b    of=/sdcard/boot_b.img
-dd if=/dev/block/by-name/vbmeta    of=/sdcard/vbmeta.img
-```
+Use **[`dump-boot.sh`](dump-boot.sh)** from this repo — paste the whole file into that box. It dumps
+every boot-related partition, records the build and active slot, writes checksums, and verifies the
+image magic bytes.
 
-> That feature ships each line to a root daemon as its own `sh -c`. **One-liners only** — variables
-> and multi-line blocks do not carry across lines.
+> **Why it is written the way it is:** that feature ships **each line** to a root daemon as its own
+> `sh -c`. Nothing carries between lines — no variables, no `cd`, no `set -e`, no multi-line
+> `if`/`for` blocks. Every line in `dump-boot.sh` is independently valid and complete, and a
+> single-line `for` loop is used where iteration is needed. Keep that property if you edit it.
 
-Pull them off the device, record checksums, and **keep a copy on another machine**:
+It is read-only with respect to your partitions — they are only ever used as `dd` **input**. The
+only writes are new files under `/sdcard/rp6-dump`.
+
+Then, from your computer:
 
 ```bash
-adb pull /sdcard/init_boot.img .
-sha256sum *.img | tee SHA256SUMS
+adb pull /sdcard/rp6-dump ./rp6-dump
+cd rp6-dump && sha256sum -c SHA256SUMS
 ```
 
-Sanity-check them rather than assuming: boot images should start with `ANDROID!` and `vbmeta` with
-`AVB0`. On this device `boot.img` was byte-identical to `boot_b.img`, while `boot_a.img` differed —
-slot A held an older build, which makes it a genuine rollback target.
+**Verify before you trust it.** A truncated or all-zero dump is worse than no dump, because you will
+rely on it in exactly the moment you cannot afford to. Check `magic.txt` — boot images must show
+`ANDROID!`, `vbmeta` must show `AVB0` — and check the sizes: `init_boot` ~8 MB, `boot` ~96 MB,
+`vbmeta` 64 KB. Then **copy the directory to a second machine.**
 
-Reference sizes: `init_boot` 8 MB, `boot` 96 MB, `vbmeta` 64 KB.
+A/B naming varies between builds (bare `boot`/`init_boot` vs slot-suffixed `boot_a`/`boot_b`), so the
+script tries every plausible name and skips the ones that do not exist. On this device `boot.img` was
+byte-identical to `boot_b.img` while `boot_a.img` differed — slot A held an older build, which makes
+it a genuine rollback target.
 
 ---
 
